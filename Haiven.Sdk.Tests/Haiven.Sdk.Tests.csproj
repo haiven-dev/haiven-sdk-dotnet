@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../Haiven.Sdk/Haiven.Sdk.csproj" />
+    <ProjectReference Include="../Haiven.Sdk.SystemTextJson/Haiven.Sdk.SystemTextJson.csproj" />
   </ItemGroup>
 
 </Project>

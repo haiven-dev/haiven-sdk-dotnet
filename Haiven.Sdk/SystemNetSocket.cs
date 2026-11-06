@@ -27,7 +27,9 @@ namespace Haiven.Sdk
     /// caller's. A Unity consumer must marshal to the main thread before touching
     /// anything in the scene; this class deliberately does not do that for them,
     /// because the way to do it differs per host and guessing wrong is worse than
-    /// not guessing.
+    /// not guessing. The host chooses instead: <see cref="SynchronizationContextSocket"/>
+    /// re-raises the events on a captured context, and the Unity package's
+    /// <c>UnitySocket</c> does that by default.
     /// </item>
     /// <item>
     /// A frame can arrive <b>in several pieces</b>. <c>EndOfMessage</c> is false
@@ -44,6 +46,13 @@ namespace Haiven.Sdk
         private bool disposed;
 
         public event Action<string>? Received;
+
+        /// <summary>
+        /// Raised when a <see cref="Received"/> subscriber rejects a complete frame.
+        /// The receive loop keeps running so one malformed frame or callback bug
+        /// cannot hide every later server acknowledgement.
+        /// </summary>
+        public event Action<string, Exception>? ReceiveFaulted;
 
         public event Action<int, string>? Closed;
 
@@ -129,7 +138,7 @@ namespace Haiven.Sdk
 
                     var complete = message.ToString();
                     message.Clear();
-                    Received?.Invoke(complete);
+                    DispatchReceived(complete);
                 }
             }
             catch (OperationCanceledException)
@@ -141,6 +150,42 @@ namespace Haiven.Sdk
                 // The peer went away without a close frame. 1006 is what a
                 // browser reports for the same thing, so bindings agree.
                 Closed?.Invoke(1006, string.Empty);
+            }
+        }
+
+        internal void DispatchReceived(string payload)
+        {
+            var handlers = Received;
+            if (handlers is null) return;
+
+            foreach (Action<string> handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    handler(payload);
+                }
+                catch (Exception error)
+                {
+                    ReportReceiveFault(payload, error);
+                }
+            }
+        }
+
+        private void ReportReceiveFault(string payload, Exception error)
+        {
+            var handlers = ReceiveFaulted;
+            if (handlers is null) return;
+
+            foreach (Action<string, Exception> handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    handler(payload, error);
+                }
+                catch (Exception)
+                {
+                    // Diagnostics must not become a second way to stop receiving.
+                }
             }
         }
     }

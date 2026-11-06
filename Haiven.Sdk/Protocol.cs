@@ -6,7 +6,7 @@
 // a missing field becomes. Whether that discriminant survives the crossing is
 // the thing worth finding out before three more bindings are written against it.
 
-using System.Text.Json;
+using Haiven.Sdk.Json;
 
 namespace Haiven.Sdk
 {
@@ -50,7 +50,14 @@ namespace Haiven.Sdk
         /// </summary>
         public bool? Success { get; private set; }
 
-        public JsonElement? Payload { get; private set; }
+        /// <summary>
+        /// The payload as parsed, or null when the frame carried none. Decode it
+        /// with the generated <c>WsApi.Decode...</c> methods.
+        /// </summary>
+        public IHaivenJsonNode? Payload { get; private set; }
+
+        /// <summary>The codec that parsed this frame and must decode opaque payload types.</summary>
+        internal IHaivenJsonCodec Codec { get; private set; } = HaivenJson.Default;
 
         /// <summary>A code from the published vocabulary, never prose.</summary>
         public string? Error { get; private set; }
@@ -65,45 +72,50 @@ namespace Haiven.Sdk
         public bool IsReply => Success.HasValue;
 
         /// <summary>
-        /// Parses a frame while preserving which fields were actually present.
+        /// Parses a frame while preserving which fields were actually present,
+        /// through <see cref="HaivenJson.Default"/>.
         ///
-        /// Hand-rolled against <see cref="JsonDocument"/> rather than
-        /// deserialised into a POCO. An attribute-driven deserialiser has to be
-        /// told, per field, that "missing" is distinct from "default", and the
-        /// one built into Unity does not offer that distinction at all — so the
-        /// reader that survives every target is the one that asks the document
-        /// what it contains.
+        /// Read member by member from the parsed node rather than deserialised
+        /// into a POCO. An attribute-driven deserialiser has to be told, per
+        /// field, that "missing" is distinct from "default", and the one built
+        /// into Unity does not offer that distinction at all -- so the reader
+        /// that survives every target is the one that asks the document what it
+        /// contains.
         /// </summary>
-        public static ServerFrame Parse(string json)
-        {
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
+        public static ServerFrame Parse(string json) => Parse(json, HaivenJson.Default);
 
-            var frame = new ServerFrame();
+        /// <summary>Parses a frame with a specific codec.</summary>
+        public static ServerFrame Parse(string json, IHaivenJsonCodec codec)
+        {
+            if (codec is null) throw new System.ArgumentNullException(nameof(codec));
+            var root = codec.Parse(json);
+            HaivenJsonRead.ExpectObject(root, "frame");
+
+            var frame = new ServerFrame { Codec = codec };
 
             if (root.TryGetProperty("type", out var type))
             {
-                frame.Type = type.GetString() ?? "";
+                frame.Type = HaivenJsonRead.NullableString(type, "frame.type") ?? "";
             }
 
             if (root.TryGetProperty("requestId", out var requestId))
             {
-                frame.RequestId = requestId.GetString();
+                frame.RequestId = HaivenJsonRead.NullableString(requestId, "frame.requestId");
             }
 
             if (root.TryGetProperty("success", out var success))
             {
-                frame.Success = success.GetBoolean();
+                frame.Success = HaivenJsonRead.Boolean(success, "frame.success");
             }
 
             if (root.TryGetProperty("error", out var error))
             {
-                frame.Error = error.GetString();
+                frame.Error = HaivenJsonRead.NullableString(error, "frame.error");
             }
 
             if (root.TryGetProperty("payload", out var payload))
             {
-                frame.Payload = payload.Clone();
+                frame.Payload = payload;
             }
 
             return frame;
