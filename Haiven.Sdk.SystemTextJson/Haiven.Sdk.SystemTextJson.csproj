@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The opt-in System.Text.Json backend for Haiven.Sdk's JSON seam.
+
+       Haiven.Sdk reads and writes JSON through IHaivenJsonCodec, with its own
+       dependency-free reader as the default. A host that already ships
+       System.Text.Json, or wants its parser, references this assembly and
+       selects it: HaivenJson.Default = SystemTextJsonCodec.Instance, or pass
+       the codec to HaivenSessionCore / RestApi. Every generated wire type is
+       still read and written by the SDK's generated code, so the choice
+       changes the parser and writer, never what a payload means.
+
+       Same surface as Haiven.Sdk (netstandard2.1, C# 9) so Unity can consume
+       it; in Unity it compiles only under the HAIVEN_SDK_SYSTEM_TEXT_JSON
+       scripting define (sdks/unity/README.md). -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Haiven.Sdk/Haiven.Sdk.csproj" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+</Project>

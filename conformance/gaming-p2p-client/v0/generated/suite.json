@@ -1,0 +1,3388 @@
+{
+  "corpus_version": 1,
+  "feature": "p2p-client",
+  "fixture": {
+    "capabilities": [
+      "script",
+      "clock",
+      "peer-transport"
+    ],
+    "id": "scripted-session/v0",
+    "protocol": "websocket+rest"
+  },
+  "id": "gaming-p2p-client/v0",
+  "kind": "suite",
+  "lifecycle": "preview",
+  "major": 0,
+  "revision": "0.1.0",
+  "scenarios": [
+    {
+      "id": "admission-waits-for-the-connection-id",
+      "requirements": [
+        "SDK-P2P-1",
+        "SDK-P2P-2"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectEvent",
+          "event": "refused",
+          "fields": {
+            "error": "invalid_state"
+          }
+        },
+        {
+          "do": "expectQuiet"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "joinCode": "ABC123",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "fields": {
+            "admissionId": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "connectionId": "conn-1",
+            "joinCode": "ABC123",
+            "resumeToken": {
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "do": "expectState",
+          "state": "admitting"
+        }
+      ],
+      "title": "A join before auth.success is refused without a request, and the join after it binds to the connection id with a fresh admission and resume token",
+      "waivers": {},
+      "why": "The server binds a participation only to the socket named by connectionId, which the controller learns from auth.success."
+    },
+    {
+      "id": "a-lost-join-reply-is-repeated-with-the-same-admission",
+      "requirements": [
+        "SDK-P2P-3"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "capture": {
+            "admission": "admissionId",
+            "token": "resumeToken"
+          },
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "do": "serveRest",
+          "lost": true
+        },
+        {
+          "do": "expectEvent",
+          "event": "refused",
+          "fields": {
+            "error": "no_reply"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "idle"
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "fields": {
+            "admissionId": {
+              "ref": "admission"
+            },
+            "connectionId": "conn-1",
+            "resumeToken": {
+              "ref": "token"
+            }
+          },
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted",
+          "fields": {
+            "hosting": false,
+            "participationId": "p-guest",
+            "sessionId": "s-1"
+          }
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "When a join's reply is lost, the same join on the same socket sends the same admission id and resume token",
+      "waivers": {},
+      "why": "The server may have admitted the first request; it answers a repeated admissionId with its first answer only when the request is the same."
+    },
+    {
+      "id": "same-socket-reauth-does-not-resume",
+      "requirements": [
+        "SDK-P2P-4"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "error": "expired_token",
+            "requestId": "",
+            "success": false,
+            "type": "auth.expired"
+          }
+        },
+        {
+          "bind": "reauth",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "reauth"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "do": "advance",
+          "seconds": 1
+        },
+        {
+          "do": "expectState",
+          "state": "in_session"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "Re-authenticating the same socket keeps the participation without a session.resume",
+      "waivers": {},
+      "why": "A renewed credential on the same socket keeps its connection id, so there is nothing to resume."
+    },
+    {
+      "id": "a-dropped-socket-resumes-then-the-host-reads-the-roster",
+      "requirements": [
+        "SDK-P2P-5",
+        "SDK-P2P-10"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "create",
+          "do": "call",
+          "maxMembers": 4
+        },
+        {
+          "capture": {
+            "token": "resumeToken"
+          },
+          "do": "expectRest",
+          "fields": {
+            "connectionId": "conn-1",
+            "maxMembers": 4
+          },
+          "method": "POST",
+          "path": "/games/7/sessions"
+        },
+        {
+          "body": {
+            "joinCode": "ABC123",
+            "participationId": "p-host",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "members": [
+              {
+                "isHost": true,
+                "userId": "host"
+              }
+            ],
+            "sessionId": "s-1"
+          },
+          "do": "serveRest",
+          "status": 200
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted",
+          "fields": {
+            "hostUserId": "host",
+            "hosting": true
+          }
+        },
+        {
+          "code": 1006,
+          "do": "close",
+          "reason": ""
+        },
+        {
+          "do": "expectEvent",
+          "event": "connectionLost"
+        },
+        {
+          "do": "expectState",
+          "state": "resuming"
+        },
+        {
+          "do": "advance",
+          "seconds": 5
+        },
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "second",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-2",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "second"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "bind": "resume",
+          "do": "expectSent",
+          "fields": {
+            "payload.participationId": "p-host",
+            "payload.previousConnectionId": "conn-1",
+            "payload.resumeToken": {
+              "ref": "token"
+            }
+          },
+          "type": "session.resume"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-2",
+              "participationId": "p-host"
+            },
+            "requestId": {
+              "ref": "resume"
+            },
+            "success": true,
+            "type": "session.resume"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "resumed"
+        },
+        {
+          "do": "expectState",
+          "state": "in_session"
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "After a drop, the next authenticated socket sends session.resume with the participation's proof, and the host reads the roster at once",
+      "waivers": {},
+      "why": "Events sent while the socket was down may be lost, so the host checks who is still in the session before going on."
+    },
+    {
+      "id": "a-refused-resume-ends-the-session",
+      "requirements": [
+        "SDK-P2P-6"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "code": 1006,
+          "do": "close",
+          "reason": ""
+        },
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "second",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-2",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "second"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "bind": "resume",
+          "do": "expectSent",
+          "type": "session.resume"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "error": "session_not_found",
+            "requestId": {
+              "ref": "resume"
+            },
+            "success": false,
+            "type": "session.resume"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "ended",
+          "fields": {
+            "code": "session_not_found",
+            "reason": "resume_refused"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "idle"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "A refused session.resume ends the session with the server's code",
+      "waivers": {},
+      "why": "The window ended, the session closed or another socket resumed first; there is nothing left to resume."
+    },
+    {
+      "id": "the-session-ends-when-no-socket-returns-in-thirty-seconds",
+      "requirements": [
+        "SDK-P2P-5",
+        "SDK-P2P-6"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "code": 1006,
+          "do": "close",
+          "reason": ""
+        },
+        {
+          "do": "advance",
+          "seconds": 29
+        },
+        {
+          "do": "expectState",
+          "state": "resuming"
+        },
+        {
+          "do": "advance",
+          "seconds": 2
+        },
+        {
+          "do": "expectEvent",
+          "event": "ended",
+          "fields": {
+            "reason": "resume_window_elapsed"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "idle"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "A dropped participation waits 30 seconds for a new socket, then ends without trying to resume",
+      "waivers": {},
+      "why": "The server holds a dropped participation for 30 seconds; after that a resume can only be refused."
+    },
+    {
+      "id": "a-revoked-credential-ends-the-session-but-an-unchecked-one-resumes",
+      "requirements": [
+        "SDK-P2P-6"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "code": 1013,
+          "do": "close",
+          "reason": "auth_unavailable"
+        },
+        {
+          "do": "expectState",
+          "state": "resuming"
+        },
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "second",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-2",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "second"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "bind": "resume",
+          "do": "expectSent",
+          "fields": {
+            "payload.previousConnectionId": "conn-1"
+          },
+          "type": "session.resume"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-2",
+              "participationId": "p-guest"
+            },
+            "requestId": {
+              "ref": "resume"
+            },
+            "success": true,
+            "type": "session.resume"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "resumed"
+        },
+        {
+          "code": 1008,
+          "do": "close",
+          "reason": "credential_revoked"
+        },
+        {
+          "do": "expectEvent",
+          "event": "ended",
+          "fields": {
+            "code": "credential_revoked",
+            "reason": "signed_out"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "idle"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "A close 1013 auth_unavailable resumes like a drop; a close 1008 credential_revoked ends the session as a sign-out",
+      "waivers": {},
+      "why": "1013 keeps the credential, so a new socket can resume; after a 1008 the same credential is refused on every socket."
+    },
+    {
+      "id": "a-roster-read-refused-with-401-signs-out",
+      "requirements": [
+        "SDK-P2P-6"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "create",
+          "do": "call",
+          "maxMembers": 4
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions"
+        },
+        {
+          "body": {
+            "joinCode": "ABC123",
+            "participationId": "p-host",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "members": [
+              {
+                "isHost": true,
+                "userId": "host"
+              }
+            ],
+            "sessionId": "s-1"
+          },
+          "do": "serveRest",
+          "status": 200
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "advance",
+          "seconds": 31
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "code": "unauthorized",
+            "message": "unauthorized"
+          },
+          "do": "serveRest",
+          "status": 401
+        },
+        {
+          "do": "expectEvent",
+          "event": "ended",
+          "fields": {
+            "code": "unauthorized",
+            "reason": "signed_out"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "idle"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "A 401 on the host's roster read ends the session as a sign-out",
+      "waivers": {},
+      "why": "A 401 means the credential is refused, which every client treats as logout."
+    },
+    {
+      "id": "an-unacknowledged-signal-is-retried-three-times-then-abandoned",
+      "requirements": [
+        "SDK-P2P-7"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "signal",
+          "kind": "offer",
+          "sdp": "v=0 offer",
+          "to": "host"
+        },
+        {
+          "bind": "first",
+          "capture": {
+            "attempt": "payload.attemptId"
+          },
+          "do": "expectSent",
+          "fields": {
+            "payload.data.epoch": 1,
+            "payload.data.kind": "offer",
+            "payload.data.participationId": "p-guest",
+            "payload.data.sdp": "v=0 offer",
+            "payload.seq": 1,
+            "payload.sessionId": "s-1",
+            "payload.toUserId": "host"
+          },
+          "type": "p2p.signal"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "requestId": {
+              "ref": "first"
+            },
+            "success": true,
+            "type": "p2p.signal"
+          }
+        },
+        {
+          "do": "advance",
+          "seconds": 1
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": {
+              "ref": "attempt"
+            },
+            "payload.seq": 1
+          },
+          "type": "p2p.signal"
+        },
+        {
+          "do": "advance",
+          "seconds": 2
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": {
+              "ref": "attempt"
+            },
+            "payload.seq": 1
+          },
+          "type": "p2p.signal"
+        },
+        {
+          "do": "advance",
+          "seconds": 4
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": {
+              "ref": "attempt"
+            },
+            "payload.seq": 1
+          },
+          "type": "p2p.signal"
+        },
+        {
+          "do": "advance",
+          "seconds": 4
+        },
+        {
+          "do": "expectEvent",
+          "event": "abandoned",
+          "fields": {
+            "seq": 1,
+            "to": "host"
+          }
+        },
+        {
+          "do": "advance",
+          "seconds": 10
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "A guest's first offer starts attempt epoch 1 at seq 1, goes out again after 1, 2 and 4 seconds without an ack, and is then abandoned",
+      "waivers": {},
+      "why": "The server delivers a signal at most once, so only the peer's ack says it arrived."
+    },
+    {
+      "id": "an-acknowledged-signal-is-not-sent-again",
+      "requirements": [
+        "SDK-P2P-7"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "signal",
+          "kind": "offer",
+          "sdp": "v=0 offer",
+          "to": "host"
+        },
+        {
+          "bind": "offer",
+          "capture": {
+            "attempt": "payload.attemptId"
+          },
+          "do": "expectSent",
+          "type": "p2p.signal"
+        },
+        {
+          "candidate": "candidate:1 1 udp 1 192.0.2.1 5000 typ host",
+          "do": "signal",
+          "kind": "candidate",
+          "to": "host"
+        },
+        {
+          "bind": "candidate",
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": {
+              "ref": "attempt"
+            },
+            "payload.data.epoch": 1,
+            "payload.data.kind": "candidate",
+            "payload.seq": 2
+          },
+          "type": "p2p.signal"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "requestId": {
+              "ref": "offer"
+            },
+            "success": true,
+            "type": "p2p.signal"
+          }
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "requestId": {
+              "ref": "candidate"
+            },
+            "success": true,
+            "type": "p2p.signal"
+          }
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": {
+                "ref": "attempt"
+              },
+              "fromUserId": "host",
+              "seq": 1,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.ack"
+          }
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": {
+                "ref": "attempt"
+              },
+              "fromUserId": "host",
+              "seq": 2,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.ack"
+          }
+        },
+        {
+          "do": "advance",
+          "seconds": 20
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "The peer's p2p.signal.ack for the attempt and seq stops the retries",
+      "waivers": {},
+      "why": "Retrying a signal that arrived would only make the peer drop a duplicate."
+    },
+    {
+      "id": "duplicate-signals-are-acknowledged-and-handed-over-once",
+      "requirements": [
+        "SDK-P2P-8"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "create",
+          "do": "call",
+          "maxMembers": 4
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions"
+        },
+        {
+          "body": {
+            "joinCode": "ABC123",
+            "participationId": "p-host",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "members": [
+              {
+                "isHost": true,
+                "userId": "host"
+              }
+            ],
+            "sessionId": "s-1"
+          },
+          "do": "serveRest",
+          "status": 200
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-1",
+              "data": "{\"kind\":\"offer\",\"participationId\":\"p-guest\",\"epoch\":1,\"part\":1,\"parts\":1,\"sdp\":\"offer-1\"}",
+              "fromUserId": "guest",
+              "seq": 1,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-1",
+            "payload.seq": 1,
+            "payload.sessionId": "s-1",
+            "payload.toUserId": "guest"
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-1",
+              "data": "{\"kind\":\"offer\",\"participationId\":\"p-guest\",\"epoch\":1,\"part\":1,\"parts\":1,\"sdp\":\"offer-1\"}",
+              "fromUserId": "guest",
+              "seq": 1,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-1",
+            "payload.seq": 1
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "expectSignal",
+          "from": "guest",
+          "kind": "offer",
+          "sdp": "offer-1"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "Every copy of a signal is acknowledged, and the peer transport gets it once",
+      "waivers": {},
+      "why": "The first ack may be the one lost, but ICE must not apply the same offer twice."
+    },
+    {
+      "id": "a-delayed-offer-from-an-older-epoch-is-dropped",
+      "requirements": [
+        "SDK-P2P-8"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "create",
+          "do": "call",
+          "maxMembers": 4
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions"
+        },
+        {
+          "body": {
+            "joinCode": "ABC123",
+            "participationId": "p-host",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "members": [
+              {
+                "isHost": true,
+                "userId": "host"
+              }
+            ],
+            "sessionId": "s-1"
+          },
+          "do": "serveRest",
+          "status": 200
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-2",
+              "data": "{\"kind\":\"offer\",\"participationId\":\"p-guest\",\"epoch\":2,\"part\":1,\"parts\":1,\"sdp\":\"second\"}",
+              "fromUserId": "guest",
+              "seq": 1,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-2",
+            "payload.seq": 1
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "expectSignal",
+          "from": "guest",
+          "kind": "offer",
+          "sdp": "second"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-1",
+              "data": "{\"kind\":\"offer\",\"participationId\":\"p-guest\",\"epoch\":1,\"part\":1,\"parts\":1,\"sdp\":\"first\"}",
+              "fromUserId": "guest",
+              "seq": 1,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-1",
+            "payload.seq": 1
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-1",
+              "data": "{\"kind\":\"candidate\",\"participationId\":\"p-guest\",\"epoch\":1,\"candidate\":\"candidate:9\",\"sdpMid\":\"0\",\"sdpMLineIndex\":0}",
+              "fromUserId": "guest",
+              "seq": 2,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-1",
+            "payload.seq": 2
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "expectQuiet"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-3",
+              "data": "{\"kind\":\"offer\",\"participationId\":\"p-guest-2\",\"epoch\":1,\"part\":1,\"parts\":1,\"sdp\":\"rejoined\"}",
+              "fromUserId": "guest",
+              "seq": 1,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-3",
+            "payload.seq": 1
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "expectSignal",
+          "from": "guest",
+          "kind": "offer",
+          "sdp": "rejoined"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "The host takes an offer only above the highest epoch it accepted for that guest participation, and a rejoin starts again at epoch 1",
+      "waivers": {},
+      "why": "A delayed first offer must not replace the guest's newer attempt; a new participation is a new guest."
+    },
+    {
+      "id": "reordered-fragments-are-assembled-and-an-early-candidate-waits",
+      "requirements": [
+        "SDK-P2P-8"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "create",
+          "do": "call",
+          "maxMembers": 4
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions"
+        },
+        {
+          "body": {
+            "joinCode": "ABC123",
+            "participationId": "p-host",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "members": [
+              {
+                "isHost": true,
+                "userId": "host"
+              }
+            ],
+            "sessionId": "s-1"
+          },
+          "do": "serveRest",
+          "status": 200
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-1",
+              "data": "{\"kind\":\"candidate\",\"participationId\":\"p-guest\",\"epoch\":1,\"candidate\":\"candidate:1\",\"sdpMid\":\"0\",\"sdpMLineIndex\":0}",
+              "fromUserId": "guest",
+              "seq": 3,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-1",
+            "payload.seq": 3
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-1",
+              "data": "{\"kind\":\"offer\",\"participationId\":\"p-guest\",\"epoch\":1,\"part\":2,\"parts\":2,\"sdp\":\"second-half\"}",
+              "fromUserId": "guest",
+              "seq": 2,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-1",
+            "payload.seq": 2
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "expectQuiet"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "attemptId": "a-1",
+              "data": "{\"kind\":\"offer\",\"participationId\":\"p-guest\",\"epoch\":1,\"part\":1,\"parts\":2,\"sdp\":\"first-half \"}",
+              "fromUserId": "guest",
+              "seq": 1,
+              "sessionId": "s-1"
+            },
+            "type": "p2p.signal.received"
+          }
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": "a-1",
+            "payload.seq": 1
+          },
+          "type": "p2p.signal.ack"
+        },
+        {
+          "do": "expectSignal",
+          "from": "guest",
+          "kind": "offer",
+          "sdp": "first-half second-half"
+        },
+        {
+          "candidate": "candidate:1",
+          "do": "expectSignal",
+          "from": "guest",
+          "kind": "candidate"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "A candidate and the second fragment that arrive before the first fragment are held, then the offer is handed over whole before the candidate",
+      "waivers": {},
+      "why": "ICE cannot take a candidate before the description it belongs to, and a description is only usable once all its parts are in."
+    },
+    {
+      "id": "a-large-description-is-split-within-the-signal-limit",
+      "requirements": [
+        "SDK-P2P-8"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "signal",
+          "kind": "offer",
+          "sdpRepeat": "a=x-haiven:<&>\"\\é\r\n",
+          "times": 120,
+          "to": "host"
+        },
+        {
+          "capture": {
+            "attempt": "payload.attemptId"
+          },
+          "do": "expectSent",
+          "fields": {
+            "payload.data": {
+              "maxSerializedBytes": 4096
+            },
+            "payload.data.epoch": 1,
+            "payload.data.part": 1,
+            "payload.data.parts": 2,
+            "payload.seq": 1
+          },
+          "type": "p2p.signal"
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.attemptId": {
+              "ref": "attempt"
+            },
+            "payload.data": {
+              "maxSerializedBytes": 4096
+            },
+            "payload.data.part": 2,
+            "payload.data.parts": 2,
+            "payload.seq": 2
+          },
+          "type": "p2p.signal"
+        },
+        {
+          "do": "expectQuiet"
+        },
+        {
+          "do": "signal",
+          "kind": "offer",
+          "sdpRepeat": "a=x-haiven:0123456789abcdef\r\n",
+          "times": 1200,
+          "to": "host"
+        },
+        {
+          "do": "expectEvent",
+          "event": "signalRefused",
+          "fields": {
+            "error": "sdp_too_large",
+            "to": "host"
+          }
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "An offer too large for one signal goes out in consecutive fragments of at most 4,096 serialized bytes, and one above 32 KiB is refused without a send",
+      "waivers": {},
+      "why": "haiven-api refuses data above 4,096 bytes as Go serializes it, escapes included, with invalid_payload."
+    },
+    {
+      "id": "the-host-drops-peers-missing-from-the-roster",
+      "requirements": [
+        "SDK-P2P-10"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "create",
+          "do": "call",
+          "maxMembers": 4
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions"
+        },
+        {
+          "body": {
+            "joinCode": "ABC123",
+            "participationId": "p-host",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "members": [
+              {
+                "isHost": true,
+                "userId": "host"
+              }
+            ],
+            "sessionId": "s-1"
+          },
+          "do": "serveRest",
+          "status": 200
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "call": "peerOpen",
+          "do": "call",
+          "userId": "a"
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.sessionId": "s-1",
+            "payload.userId": "a"
+          },
+          "type": "session.peer.connected"
+        },
+        {
+          "call": "peerOpen",
+          "do": "call",
+          "userId": "b"
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.userId": "b"
+          },
+          "type": "session.peer.connected"
+        },
+        {
+          "do": "advance",
+          "seconds": 29
+        },
+        {
+          "do": "expectQuiet"
+        },
+        {
+          "do": "advance",
+          "seconds": 2
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "members": [
+              {
+                "isHost": true,
+                "userId": "host"
+              },
+              {
+                "isHost": false,
+                "userId": "a"
+              }
+            ],
+            "sessionId": "s-1"
+          },
+          "do": "serveRest",
+          "status": 200
+        },
+        {
+          "do": "expectEvent",
+          "event": "peerDropped",
+          "fields": {
+            "userId": "b"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "memberLeft",
+          "fields": {
+            "reason": "not_on_roster",
+            "userId": "b"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "in_session"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "Every 30 seconds the host reads the roster and drops any connected peer it no longer lists",
+      "waivers": {},
+      "why": "A lost session.member.left must not leave a removed player connected."
+    },
+    {
+      "id": "member-left-for-a-guest-drops-that-peer-on-the-host",
+      "requirements": [
+        "SDK-P2P-11"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "create",
+          "do": "call",
+          "maxMembers": 4
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions"
+        },
+        {
+          "body": {
+            "joinCode": "ABC123",
+            "participationId": "p-host",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "do": "expectRest",
+          "method": "GET",
+          "path": "/games/7/sessions/s-1"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "members": [
+              {
+                "isHost": true,
+                "userId": "host"
+              }
+            ],
+            "sessionId": "s-1"
+          },
+          "do": "serveRest",
+          "status": 200
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "call": "peerOpen",
+          "do": "call",
+          "userId": "guest"
+        },
+        {
+          "do": "expectSent",
+          "fields": {
+            "payload.userId": "guest"
+          },
+          "type": "session.peer.connected"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "participationId": "p-guest",
+              "reason": "kicked",
+              "sessionId": "s-1",
+              "userId": "guest"
+            },
+            "type": "session.member.left"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "peerDropped",
+          "fields": {
+            "userId": "guest"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "memberLeft",
+          "fields": {
+            "reason": "kicked",
+            "userId": "guest"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "in_session"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "session.member.left naming a guest drops that guest's connection on the host at once",
+      "waivers": {},
+      "why": "The server has removed the participation; waiting for the connection to fail or the next roster read keeps a removed player in the game."
+    },
+    {
+      "id": "member-left-for-this-participation-ends-the-session-at-once",
+      "requirements": [
+        "SDK-P2P-11"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "participationId": "p-guest",
+              "reason": "kicked",
+              "sessionId": "s-other",
+              "userId": "guest"
+            },
+            "type": "session.member.left"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "in_session"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "participationId": "p-guest",
+              "reason": "kicked",
+              "sessionId": "s-1",
+              "userId": "guest"
+            },
+            "type": "session.member.left"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "ended",
+          "fields": {
+            "code": "kicked",
+            "reason": "removed"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "idle"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "session.member.left naming the controller's own participation ends the session with the server's reason",
+      "waivers": {},
+      "why": "A kicked player must stop playing at once, not when the host's connection times out."
+    },
+    {
+      "id": "session-closed-ends-the-session-once",
+      "requirements": [
+        "SDK-P2P-11"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "reason": "host_left",
+              "sessionId": "s-1"
+            },
+            "type": "session.closed"
+          }
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "reason": "host_left",
+              "sessionId": "s-1"
+            },
+            "type": "session.closed"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "ended",
+          "fields": {
+            "code": "host_left",
+            "reason": "closed"
+          }
+        },
+        {
+          "do": "expectState",
+          "state": "idle"
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "session.closed ends the session with its reason, and a second one changes nothing",
+      "waivers": {},
+      "why": "Closing every peer connection is tied to the end of the session, which must be reported once."
+    },
+    {
+      "id": "relay-only-from-the-ice-servers-reply-sets-the-relay-policy",
+      "requirements": [
+        "SDK-P2P-12"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "relay-only",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "credential": "c",
+                  "urls": [
+                    "turn:turn.example.test:3478"
+                  ],
+                  "username": "u"
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "relay-only"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted",
+          "fields": {
+            "icePolicy": "relay"
+          }
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "A relay-only ICE servers reply makes the session's ICE policy relay before the first signal",
+      "waivers": {},
+      "why": "Under relay-only no host or server-reflexive candidate may ever leave the device, so the policy must be set when the first connection is made."
+    },
+    {
+      "id": "ice-servers-are-fetched-again-at-refresh-after",
+      "requirements": [
+        "SDK-P2P-14"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": {
+                "secondsFromNow": 60
+              },
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "advance",
+          "seconds": 50
+        },
+        {
+          "do": "expectQuiet"
+        },
+        {
+          "do": "advance",
+          "seconds": 11
+        },
+        {
+          "bind": "refresh",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                },
+                {
+                  "credential": "c",
+                  "urls": [
+                    "turn:turn.example.test:3478"
+                  ],
+                  "username": "u"
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "refresh"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "iceOptions",
+          "fields": {
+            "policy": "all",
+            "servers": 2
+          }
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "ICE servers are fetched again once refreshAfter passes, and not before",
+      "waivers": {},
+      "why": "TURN credentials expire during a long match; a new peer connection needs servers that are still valid."
+    },
+    {
+      "id": "a-refused-ice-servers-fetch-is-tried-again",
+      "requirements": [
+        "SDK-P2P-14"
+      ],
+      "steps": [
+        {
+          "do": "attach"
+        },
+        {
+          "do": "open"
+        },
+        {
+          "bind": "handshake",
+          "do": "expectSent",
+          "type": "auth"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "connectionId": "conn-1",
+              "contract": {
+                "capabilities": [],
+                "descriptionDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "subprotocol": "haiven.gaming.v0",
+                "surface": "gaming",
+                "surfaceMajor": 1,
+                "surfaceRevision": "0.0.0-preview"
+              }
+            },
+            "requestId": {
+              "ref": "handshake"
+            },
+            "success": true,
+            "type": "auth.success"
+          }
+        },
+        {
+          "call": "join",
+          "do": "call",
+          "sessionId": "s-1"
+        },
+        {
+          "do": "expectRest",
+          "method": "POST",
+          "path": "/games/7/sessions/s-1/members"
+        },
+        {
+          "body": {
+            "hostUserId": "host",
+            "participationId": "p-guest",
+            "relayPolicy": "auto",
+            "sessionId": "s-1",
+            "state": "open"
+          },
+          "do": "serveRest",
+          "status": 201
+        },
+        {
+          "bind": "ice",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": {
+                "secondsFromNow": 60
+              },
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "ice"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "admitted"
+        },
+        {
+          "do": "advance",
+          "seconds": 61
+        },
+        {
+          "bind": "refresh",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "error": "relay_unavailable",
+            "requestId": {
+              "ref": "refresh"
+            },
+            "success": false,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "advance",
+          "seconds": 29
+        },
+        {
+          "do": "expectQuiet"
+        },
+        {
+          "do": "advance",
+          "seconds": 2
+        },
+        {
+          "bind": "again",
+          "do": "expectSent",
+          "type": "p2p.ice.servers"
+        },
+        {
+          "do": "serve",
+          "frame": {
+            "payload": {
+              "expiresAt": null,
+              "iceServers": [
+                {
+                  "urls": [
+                    "stun:stun.example.test:3478"
+                  ]
+                }
+              ],
+              "refreshAfter": null,
+              "relayPolicy": "auto"
+            },
+            "requestId": {
+              "ref": "again"
+            },
+            "success": true,
+            "type": "p2p.ice.servers"
+          }
+        },
+        {
+          "do": "expectEvent",
+          "event": "iceOptions",
+          "fields": {
+            "policy": "all",
+            "servers": 1
+          }
+        },
+        {
+          "do": "expectQuiet"
+        }
+      ],
+      "title": "A refused ICE servers refresh keeps the old servers and is tried again 30 seconds later",
+      "waivers": {},
+      "why": "A connection made meanwhile still needs servers, and the next fetch may succeed."
+    }
+  ],
+  "steps": {
+    "advance": "The controller's clock moves forward by `seconds`.",
+    "attach": "A new game socket is attached to the controller as its current socket. It is not open yet.",
+    "call": "The game calls the controller: `create` with `maxMembers`, `join` with `sessionId` and an optional `joinCode`, `leave`, or `peerOpen`, which is the peer transport reporting the data channels to `userId` open. A create or join ends later with an `admitted` or `refused` event.",
+    "close": "The server closes the current socket with the WebSocket close `code` and `reason`.",
+    "expectEvent": "The controller has reported `event` since the previous expectEvent, with `fields` when given: admitted (sessionId, participationId, hostUserId, hosting, icePolicy), refused (error), ended (reason, code), memberLeft (userId, reason), peerDropped (userId), abandoned (to, seq), signalRefused (to, error), iceOptions (policy, servers), connectionLost, or resumed.",
+    "expectQuiet": "Every frame the SDK wrote, every REST request it made and every signal handed to the peer transport has been consumed by an expect step.",
+    "expectRest": "The next REST request the SDK made has `method` and `path`. `fields` and `capture` read its JSON body as expectSent reads a frame.",
+    "expectSent": "The next frame the SDK wrote has `type`. `bind` names an alias for its requestId. `fields` maps a dotted path in the frame to the value it must have; a path that steps into a string reads that string as JSON. A value {\"ref\": alias} must equal the bound value, {\"pattern\": re} must be a string matching the regular expression, and {\"maxSerializedBytes\": n} must be a string of at most n bytes once JSON-encoded with <, >, &, U+2028 and U+2029 escaped. `capture` maps an alias to a path whose value later steps use.",
+    "expectSignal": "The next signal the signaling handed to the peer transport came `from` that user with `kind`, and with `sdp` or `candidate` when given.",
+    "expectState": "The controller is in `state`: idle, admitting, in_session or resuming.",
+    "open": "The current socket becomes writable and the SDK starts its session.",
+    "serve": "The scripted server delivers `frame` on the current socket. Every object {\"ref\": alias} inside it is replaced by the value bound to that alias, and every {\"secondsFromNow\": n} by the ISO 8601 UTC time n seconds after the runner's wall clock.",
+    "serveRest": "The REST API answers the oldest unanswered request with `status` and the JSON `body`, or, when `lost` is true, the connection closes before any reply.",
+    "signal": "The peer transport hands the signaling a signal for `to`: `kind` offer or answer with `sdp`, or candidate with `candidate`. An `sdp` given as `sdpRepeat` and `times` is that text repeated."
+  },
+  "surface": "gaming",
+  "surface_major": 0
+}

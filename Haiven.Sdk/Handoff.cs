@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using Haiven.Sdk.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -107,7 +107,7 @@ namespace Haiven.Sdk
 
     public sealed class HandoffExchangeResponse
     {
-        public HandoffExchangeResponse(string accessToken, string tokenType, long expiresInSeconds)
+        public HandoffExchangeResponse(string accessToken, string tokenType, long? expiresInSeconds)
         {
             AccessToken = !string.IsNullOrEmpty(accessToken)
                 ? accessToken
@@ -115,36 +115,40 @@ namespace Haiven.Sdk
             TokenType = !string.IsNullOrEmpty(tokenType)
                 ? tokenType
                 : throw new ArgumentException("The exchange returned no token type.", nameof(tokenType));
-            ExpiresInSeconds = expiresInSeconds >= 0
+            ExpiresInSeconds = expiresInSeconds is null || expiresInSeconds >= 0
                 ? expiresInSeconds
                 : throw new ArgumentOutOfRangeException(nameof(expiresInSeconds));
         }
 
         public string AccessToken { get; }
         public string TokenType { get; }
-        public long ExpiresInSeconds { get; }
+
+        /// <summary>
+        /// Seconds left on the bearer, or null for a durable credential that lasts
+        /// until it is revoked (ADR 0041).
+        /// </summary>
+        public long? ExpiresInSeconds { get; }
 
         public static HandoffExchangeResponse ParseJson(string json)
         {
             try
             {
-                using (var document = JsonDocument.Parse(json))
-                {
-                    var root = document.RootElement;
-                    if (root.TryGetProperty("refresh_token", out _))
-                        throw new HandoffException("The handoff exchange returned a forbidden refresh credential.");
-                    return new HandoffExchangeResponse(
-                        root.GetProperty("access_token").GetString() ?? "",
-                        root.GetProperty("token_type").GetString() ?? "",
-                        root.GetProperty("expires_in").GetInt64());
-                }
+                var root = HaivenJson.Parse(json);
+                HaivenJsonRead.ExpectObject(root, "exchange");
+                if (root.TryGetProperty("refresh_token", out _))
+                    throw new HandoffException("The handoff exchange returned a forbidden refresh credential.");
+                return new HandoffExchangeResponse(
+                    Member(root, "access_token", HaivenJsonRead.NullableString) ?? "",
+                    Member(root, "token_type", HaivenJsonRead.NullableString) ?? "",
+                    // Present but null for a durable credential (ADR 0041).
+                    Member(root, "expires_in", HaivenJsonRead.NullableInt64));
             }
             catch (HandoffException)
             {
                 throw;
             }
             catch (Exception error) when (
-                error is JsonException
+                error is HaivenJsonException
                 || error is InvalidOperationException
                 || error is KeyNotFoundException
                 || error is ArgumentException
@@ -153,11 +157,14 @@ namespace Haiven.Sdk
                 throw new HandoffException("The handoff exchange returned an invalid credential.", error);
             }
         }
+
+        private static T Member<T>(IHaivenJsonNode root, string name, Func<IHaivenJsonNode, string, T> read) =>
+            root.TryGetProperty(name, out var value) ? read(value, "exchange." + name) : throw HaivenJsonRead.Missing("exchange." + name);
     }
 
     public sealed class HandoffCredential
     {
-        public HandoffCredential(string accessToken, string tokenType, DateTimeOffset expiresAt)
+        public HandoffCredential(string accessToken, string tokenType, DateTimeOffset? expiresAt)
         {
             AccessToken = accessToken;
             TokenType = tokenType;
@@ -166,7 +173,23 @@ namespace Haiven.Sdk
 
         public string AccessToken { get; }
         public string TokenType { get; }
-        public DateTimeOffset ExpiresAt { get; }
+
+        /// <summary>
+        /// When the bearer stops working, or null for a durable credential that
+        /// lasts until it is revoked (ADR 0041).
+        /// </summary>
+        public DateTimeOffset? ExpiresAt { get; }
+
+        /// <summary>True at or after a finite expiry. A durable credential never expires.</summary>
+        public bool HasExpired(DateTimeOffset now) => ExpiresAt.HasValue && now >= ExpiresAt.Value;
+    }
+
+    /// <summary>The finite events that invalidate an opaque game credential.</summary>
+    public enum HandoffCredentialEndReason
+    {
+        Expired,
+        RestUnauthorized,
+        WebSocketExpired,
     }
 
     public interface IHandoffBrowser
@@ -184,6 +207,20 @@ namespace Haiven.Sdk
     public interface IHandoffTokenStore
     {
         void Store(HandoffCredential credential);
+        void Clear();
+    }
+
+    /// <summary>
+    /// A token store that keeps the credential across restarts, so
+    /// <see cref="HandoffCoordinator.Resume"/> can reuse it instead of opening the
+    /// browser. A shipped game supplies one backed by persistent storage; the
+    /// included <see cref="MemoryHandoffTokenStore"/> forgets it on exit and is
+    /// for development only.
+    /// </summary>
+    public interface IHandoffCredentialStore : IHandoffTokenStore
+    {
+        /// <summary>The credential saved earlier, or null when none is saved.</summary>
+        HandoffCredential? Load();
     }
 
     public interface IHandoffHttpTransport
@@ -232,7 +269,12 @@ namespace Haiven.Sdk
         }
     }
 
-    public sealed class MemoryHandoffTokenStore : IHandoffTokenStore
+    /// <summary>
+    /// Keeps the credential in memory only, so every launch needs a new handoff.
+    /// For development and tests; a shipped game supplies a persistent
+    /// <see cref="IHandoffCredentialStore"/>.
+    /// </summary>
+    public sealed class MemoryHandoffTokenStore : IHandoffCredentialStore
     {
         private readonly object gate = new object();
         private HandoffCredential? credential;
@@ -242,10 +284,20 @@ namespace Haiven.Sdk
             get { lock (gate) return credential; }
         }
 
+        public HandoffCredential? Load()
+        {
+            lock (gate) return credential;
+        }
+
         public void Store(HandoffCredential value)
         {
             if (value is null) throw new ArgumentNullException(nameof(value));
             lock (gate) credential = value;
+        }
+
+        public void Clear()
+        {
+            lock (gate) credential = null;
         }
     }
 
@@ -323,6 +375,41 @@ namespace Haiven.Sdk
             return new HandoffStart(uri, state);
         }
 
+        /// <summary>
+        /// Reuses the credential an <see cref="IHandoffCredentialStore"/> saved, so a
+        /// restart does not send the player back to the browser. Call it before
+        /// <see cref="BeginLogin"/>; it returns null when nothing valid is saved, and
+        /// the caller then begins a handoff. A saved credential past its expiry is
+        /// cleared. A reused credential raises <see cref="Completed"/> on the calling
+        /// thread, like a finished handoff.
+        /// </summary>
+        public HandoffCredential? Resume()
+        {
+            if (!(tokens is IHandoffCredentialStore store)) return null;
+            var saved = store.Load();
+            if (saved is null) return null;
+            if (string.IsNullOrEmpty(saved.AccessToken) || saved.HasExpired(clock.UtcNow))
+            {
+                tokens.Clear();
+                return null;
+            }
+            Completed?.Invoke(saved);
+            return saved;
+        }
+
+        /// <summary>
+        /// Clears a handoff bearer rejected by local expiry, REST 401, or
+        /// auth.expired, then starts a fresh handoff. There is deliberately no
+        /// web refresh-token path for a game credential.
+        /// </summary>
+        public HandoffStart RestartLogin(HandoffCredentialEndReason reason)
+        {
+            if (!Enum.IsDefined(typeof(HandoffCredentialEndReason), reason))
+                throw new ArgumentOutOfRangeException(nameof(reason));
+            tokens.Clear();
+            return BeginLogin();
+        }
+
         public async Task<HandoffCredential> CompleteAsync(Uri callbackUri, CancellationToken cancellationToken = default)
         {
             if (callbackUri is null) throw new ArgumentNullException(nameof(callbackUri));
@@ -354,17 +441,17 @@ namespace Haiven.Sdk
             var response = await http.ExchangeAsync(
                 options.ExchangeUri,
                 new HandoffExchangeRequest(code, transaction.CodeVerifier, options.IntegrationId, options.RedirectUri),
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken);
             var credential = new HandoffCredential(
                 response.AccessToken,
                 response.TokenType,
-                clock.UtcNow.AddSeconds(response.ExpiresInSeconds));
+                response.ExpiresInSeconds is long seconds ? clock.UtcNow.AddSeconds(seconds) : (DateTimeOffset?)null);
 
             await dispatcher.RunAsync(() =>
             {
                 tokens.Store(credential);
                 Completed?.Invoke(credential);
-            }, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken);
 
             return credential;
         }
@@ -373,11 +460,11 @@ namespace Haiven.Sdk
         {
             try
             {
-                await CompleteAsync(callbackUri, cancellationToken).ConfigureAwait(false);
+                await CompleteAsync(callbackUri, cancellationToken);
             }
             catch (Exception error)
             {
-                await dispatcher.RunAsync(() => Failed?.Invoke(error), CancellationToken.None).ConfigureAwait(false);
+                await dispatcher.RunAsync(() => Failed?.Invoke(error), CancellationToken.None);
             }
         }
 
