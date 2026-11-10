@@ -1,0 +1,38 @@
+name: release-please
+
+# Runs on main alone (the haiven-docs contribution standard): sdk-dev takes the work,
+# an sdk-dev -> main promotion lands it, and this opens the release pull request that
+# bumps version.txt, CHANGELOG.md, the manifest and every engine's version string.
+# Merging that pull request tags v<version> and publishes the GitHub release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint release-please token
+        id: release-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.HAIVEN_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HAIVEN_RELEASE_APP_PRIVATE_KEY }}
+          owner: haiven-dev
+          repositories: haiven-sdk-dotnet
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ steps.release-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: main

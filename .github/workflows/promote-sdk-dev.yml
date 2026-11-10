@@ -1,0 +1,186 @@
+name: promote sdk-dev
+
+# release-please deliberately runs on main only. It cannot use sdk-dev as its
+# source while opening a release PR against main, so this workflow owns the
+# reviewed sdk-dev -> main promotion PR that runs before release-please.
+#
+# Manual dispatch is intentional: updating the promotion head dismisses its
+# approval. The expected SHA makes each dispatch an exact, reviewable action.
+#
+# The pull request head is a disposable branch named for that sdk-dev SHA.
+# delete_branch_on_merge may delete that head. This workflow never merges and
+# never deletes or resets sdk-dev.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sdk_dev_sha:
+        description: Exact 40-character sdk-dev head to promote
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-sdk-dev
+  cancel-in-progress: false
+
+jobs:
+  promotion-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint promotion token
+        id: promotion-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.HAIVEN_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HAIVEN_RELEASE_APP_PRIVATE_KEY }}
+          owner: haiven-dev
+          repositories: haiven-sdk-dotnet
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.promotion-token.outputs.token }}
+
+      - name: Verify the exact promotion range
+        id: promotion
+        env:
+          EXPECTED_SDK_DEV_SHA: ${{ inputs.expected_sdk_dev_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main \
+            +refs/heads/sdk-dev:refs/remotes/origin/sdk-dev
+
+          main_sha="$(git rev-parse origin/main)"
+          sdk_dev_sha="$(git rev-parse origin/sdk-dev)"
+          if [[ ! "$EXPECTED_SDK_DEV_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_sdk_dev_sha must be a full lowercase Git SHA" >&2
+            exit 1
+          fi
+          if [[ "$sdk_dev_sha" != "$EXPECTED_SDK_DEV_SHA" ]]; then
+            echo "sdk-dev moved: expected $EXPECTED_SDK_DEV_SHA, found $sdk_dev_sha" >&2
+            exit 1
+          fi
+
+          commit_count="$(git rev-list --count origin/main..origin/sdk-dev)"
+          if [[ "$commit_count" == 0 ]]; then
+            echo "sdk-dev has no commits to promote" >&2
+            exit 1
+          fi
+
+          promotion_branch="promote/sdk-dev-${sdk_dev_sha}"
+          {
+            echo "Promotes the exact reviewed sdk-dev head into main."
+            echo
+            echo "- sdk-dev: \`$sdk_dev_sha\`"
+            echo "- main at dispatch: \`$main_sha\`"
+            echo "- commits in promotion range: $commit_count"
+            echo "- promotion head: \`$promotion_branch\` (deleted on merge; sdk-dev is not)"
+            echo
+            echo "The release-please workflow runs on main after this PR merges. It opens"
+            echo "the separately reviewed version/changelog PR; merging that PR publishes"
+            echo "the tag and GitHub release."
+            echo
+            echo "BEGIN_COMMIT_OVERRIDE"
+            git log --reverse \
+              --format='BEGIN_NESTED_COMMIT%n%s%nEND_NESTED_COMMIT' \
+              origin/main..origin/sdk-dev
+            echo "END_COMMIT_OVERRIDE"
+            echo
+            echo "After the release PR merges, reset sdk-dev to main with a force-with-lease"
+            echo "guarded by \`$sdk_dev_sha\`, as documented in CONTRIBUTING.md."
+          } > "$RUNNER_TEMP/sdk-dev-promotion.md"
+
+          body_bytes="$(wc -c < "$RUNNER_TEMP/sdk-dev-promotion.md" | tr -d '[:space:]')"
+          if (( body_bytes >= 60000 )); then
+            echo "promotion pull request body is ${body_bytes} bytes; it must be under 60000" >&2
+            exit 1
+          fi
+          echo "promotion body bytes=${body_bytes}"
+
+          {
+            echo "main_sha=$main_sha"
+            echo "sdk_dev_sha=$sdk_dev_sha"
+            echo "commit_count=$commit_count"
+            echo "promotion_branch=$promotion_branch"
+            echo "body_bytes=$body_bytes"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or refresh the reviewed promotion PR
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ steps.promotion-token.outputs.token }}
+          SDK_DEV_SHA: ${{ steps.promotion.outputs.sdk_dev_sha }}
+          PROMOTION_BRANCH: ${{ steps.promotion.outputs.promotion_branch }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PROMOTION_BRANCH" =~ ^promote/sdk-dev-[0-9a-f]{40}$ ]]; then
+            echo "refusing unexpected promotion branch: ${PROMOTION_BRANCH}" >&2
+            exit 1
+          fi
+          if [[ "$PROMOTION_BRANCH" != "promote/sdk-dev-${SDK_DEV_SHA}" ]]; then
+            echo "promotion branch ${PROMOTION_BRANCH} is not pinned to ${SDK_DEV_SHA}" >&2
+            exit 1
+          fi
+
+          # Same SHA republishes this disposable ref. A different tip is left
+          # untouched: this workflow does not reset branches, including sdk-dev.
+          if ! git push origin "${SDK_DEV_SHA}:refs/heads/${PROMOTION_BRANCH}"; then
+            echo "failed to publish ${PROMOTION_BRANCH} at ${SDK_DEV_SHA}" >&2
+            exit 1
+          fi
+
+          pr_number="$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --base main \
+            --head "$PROMOTION_BRANCH" \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [[ -n "$pr_number" ]]; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+              -f title='chore: promote sdk-dev to main' \
+              -F body=@"$RUNNER_TEMP/sdk-dev-promotion.md" \
+              --silent
+          else
+            pr_number="$(gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/pulls" \
+              -f base=main \
+              -f head="$PROMOTION_BRANCH" \
+              -f title='chore: promote sdk-dev to main' \
+              -F body=@"$RUNNER_TEMP/sdk-dev-promotion.md" \
+              --jq .number)"
+          fi
+
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+          gh pr view "$pr_number" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json url,baseRefName,headRefName,headRefOid,mergeable,reviewDecision
+
+      - name: Record the promotion receipt
+        env:
+          PR_NUMBER: ${{ steps.pull-request.outputs.number }}
+          MAIN_SHA: ${{ steps.promotion.outputs.main_sha }}
+          SDK_DEV_SHA: ${{ steps.promotion.outputs.sdk_dev_sha }}
+          COMMIT_COUNT: ${{ steps.promotion.outputs.commit_count }}
+          PROMOTION_BRANCH: ${{ steps.promotion.outputs.promotion_branch }}
+          BODY_BYTES: ${{ steps.promotion.outputs.body_bytes }}
+        run: |
+          {
+            echo "## sdk-dev promotion"
+            echo
+            echo "- PR: #$PR_NUMBER"
+            echo "- sdk-dev: \`$SDK_DEV_SHA\`"
+            echo "- promotion head: \`$PROMOTION_BRANCH\`"
+            echo "- main at dispatch: \`$MAIN_SHA\`"
+            echo "- commits: $COMMIT_COUNT"
+            echo "- body bytes: $BODY_BYTES"
+            echo
+            echo "This workflow never merges. It publishes only the disposable promotion"
+            echo "ref and never deletes or resets sdk-dev. Main protection owns review"
+            echo "and merge; the post-release sdk-dev reset remains guarded and explicit."
+          } >> "$GITHUB_STEP_SUMMARY"
