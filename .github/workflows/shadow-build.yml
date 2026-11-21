@@ -1,0 +1,124 @@
+name: Encrypted .NET shadow build
+run-name: Shadow build ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Public run correlation ID
+        type: string
+        required: true
+      request:
+        description: Approved encrypted diffs, public bases, and output recipient
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  GIT_LFS_SKIP_SMUDGE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+
+jobs:
+  request:
+    if: >-
+      github.repository == 'haiven-dev/haiven-sdk-dotnet' && github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main' && github.ref_protected && github.run_attempt == '1'
+      && vars.SDK_SHADOW_DISPATCH_ACTOR_ID != '' && github.actor_id == vars.SDK_SHADOW_DISPATCH_ACTOR_ID
+    runs-on: ubuntu-24.04
+    outputs:
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      request_id: ${{ steps.plan.outputs.request_id }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Require a pinned shared builder
+        env:
+          BUILDER_SHA: ${{ vars.SDK_SHADOW_BUILDER_SHA }}
+        shell: bash
+        run: '[[ "$BUILDER_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: haiven-dev/haiven-sdk-cpp
+          ref: ${{ vars.SDK_SHADOW_BUILDER_SHA }}
+          path: builder
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - id: plan
+        name: Validate the request for .NET
+        env:
+          EXPECTED_TARGET: 'dotnet'
+          SHADOW_REQUEST: ${{ inputs.request }}
+          DISPLAY_ID: ${{ inputs.request_id }}
+        shell: bash
+        run: |
+          [[ "$DISPLAY_ID" == "$(jq -r .request_id <<< "$SHADOW_REQUEST")" ]]
+          python builder/.github/shadow-build/build.py plan
+
+  build:
+    name: Shadow build / ${{ matrix.platform }}
+    needs: request
+    environment: shadow-source
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.request.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: haiven-dev/haiven-sdk-cpp
+          ref: ${{ vars.SDK_SHADOW_BUILDER_SHA }}
+          path: builder
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.request.outputs.base_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Install pinned age
+        shell: bash
+        run: go install filippo.io/age/cmd/age@v1.3.2
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: source/global.json
+      - name: Verify and reconstruct approved source
+        env:
+          SHADOW_REQUEST: ${{ inputs.request }}
+          SDK_SHADOW_SOURCE_AGE_IDENTITY: ${{ secrets.SDK_SHADOW_SOURCE_AGE_IDENTITY }}
+        shell: bash
+        run: |
+          go_bin="$(go env GOPATH)/bin"
+          export PATH="$go_bin:$PATH"
+          python builder/.github/shadow-build/build.py reconstruct --source source \
+            --dotnet source --verification "$RUNNER_TEMP/shadow-source.json"
+      - id: build
+        name: Build and seal results
+        env:
+          SHADOW_REQUEST: ${{ inputs.request }}
+          PLATFORM: ${{ matrix.platform }}
+        shell: bash
+        run: |
+          go_bin="$(go env GOPATH)/bin"
+          export PATH="$go_bin:$PATH"
+          python builder/.github/shadow-build/build.py build --platform "$PLATFORM" --source source \
+            --dotnet source --verification "$RUNNER_TEMP/shadow-source.json" \
+            --work "$RUNNER_TEMP/shadow-build" --bundle "$RUNNER_TEMP/build.age"
+      - name: Retain encrypted results
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: shadow-${{ needs.request.outputs.request_id }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/build.age
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
