@@ -3,6 +3,153 @@
 Normative client behaviour (session lifecycle, recovery, open vocabularies, REST, handoff) is specified in
 the Haiven SDK client specification.
 
+## Install
+
+Download `haiven-dotnet-portable.tar.gz` from the
+[.NET SDK release](https://github.com/haiven-dev/haiven-sdk-dotnet/releases/tag/v0.1.0-preview.1).
+Extract it into your project folder. The release provides
+`SHA256SUMS.binaries` for the archive. From your project folder, install
+the core package from the extracted NuGet feed.
+
+```sh
+dotnet add package Haiven.Sdk --version 0.1.0-preview.1 --source ./haiven-dotnet-portable
+```
+
+To build against source, clone the public release tag into your project
+folder and add a project reference.
+
+```sh
+git clone --depth 1 --branch v0.1.0-preview.1 https://github.com/haiven-dev/haiven-sdk-dotnet.git
+dotnet add reference ./haiven-sdk-dotnet/Haiven.Sdk/Haiven.Sdk.csproj
+```
+
+## Quickstart
+
+Install `Haiven.Sdk` as shown under [Install](#install). The core never opens
+a browser or makes an HTTP request by itself, so a plain .NET host supplies
+three small adapters: `SystemBrowser`, `HttpHandoffExchange` and
+`HttpRestTransport` at the end of this `Program.cs`. The URLs are production's.
+Ask the Haiven app owner for your public integration id and a channel id, and
+register the redirect URI on the integration exactly, port included. Use the IP
+literal `127.0.0.1`, not `localhost`.
+
+```csharp
+using System;
+using System.Diagnostics;
+using System.Net.Http;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Haiven.Sdk;
+using Haiven.Sdk.Rest;
+
+var http = new HttpClient();
+var redirectUri = new Uri("http://127.0.0.1:47615/haiven/callback");
+
+// Sign in: open Haiven's sign-in page, then receive the redirect on loopback.
+var login = new HandoffCoordinator(
+    new HandoffOptions(
+        new Uri("https://haiven.gg/connect/game"),
+        new Uri("https://haiven.gg/v0/auth/handoff/exchange"),
+        "your-public-integration-id",
+        redirectUri),
+    new SystemBrowser(),
+    new MemoryHandoffTransactionStore(),
+    new MemoryHandoffTokenStore(), // development only: forgets the credential on exit
+    new HttpHandoffExchange(http),
+    new ImmediateHandoffDispatcher());
+
+var credential = login.Resume(); // null when nothing valid is saved
+if (credential is null)
+{
+    using var listener = LoopbackHandoffListener.Start(redirectUri);
+    credential = await login.LoginAsync(listener);
+}
+string Token() => credential.AccessToken;
+
+// One REST call.
+var rest = new RestApi(new HttpRestTransport(http, new Uri("https://haiven.gg/v0/"), Token));
+var tags = await rest.GetAppsTagsAsync();
+Console.WriteLine($"{tags?.Count ?? 0} public tags");
+
+// One realtime message: queued until the session has authenticated.
+var chat = new HaivenChat();
+chat.OutgoingChanged += message => Console.WriteLine($"chat send: {message.State}");
+var socket = new SystemNetSocket(); // raises events on a background thread
+var session = new HaivenSessionCore(socket, Token);
+chat.Attach(session);
+session.Authenticated += () => Console.WriteLine("realtime ready");
+await socket.ConnectAsync(new Uri("wss://haiven.gg/v0/ws"));
+session.Opened(); // sends the auth frame
+chat.Send("your-channel-id", "gg");
+Console.ReadLine(); // keep the process, and the socket, alive
+
+sealed class SystemBrowser : IHandoffBrowser
+{
+    public void Open(Uri uri) => Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+}
+
+sealed class HttpHandoffExchange : IHandoffHttpTransport
+{
+    private readonly HttpClient http;
+    public HttpHandoffExchange(HttpClient http) => this.http = http;
+
+    public async Task<HandoffExchangeResponse> ExchangeAsync(
+        Uri exchangeUri, HandoffExchangeRequest request, CancellationToken cancellationToken)
+    {
+        using var body = new StringContent(request.ToFormBody(), Encoding.UTF8, "application/x-www-form-urlencoded");
+        using var response = await http.PostAsync(exchangeUri, body, cancellationToken);
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HandoffException($"Handoff exchange failed with HTTP {(int)response.StatusCode}.");
+        return HandoffExchangeResponse.ParseJson(text);
+    }
+}
+
+sealed class HttpRestTransport : IRestApiTransport
+{
+    private readonly HttpClient http;
+    private readonly Uri baseUri;
+    private readonly Func<string> token;
+
+    public HttpRestTransport(HttpClient http, Uri baseUri, Func<string> token)
+    {
+        this.http = http;
+        this.baseUri = baseUri;
+        this.token = token;
+    }
+
+    public Uri Url(string path) => new Uri(baseUri, path.TrimStart('/'));
+
+    public async Task<string?> SendAsync(RestRequest request, CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(new HttpMethod(request.Method), Url(request.Path));
+        var accessToken = token();
+        if (!string.IsNullOrEmpty(accessToken))
+            message.Headers.Authorization = new("Bearer", accessToken);
+        if (request.Body != null)
+            message.Content = new StringContent(request.Body, Encoding.UTF8, request.ContentType ?? "application/json");
+        using var response = await http.SendAsync(message, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HaivenRestException((int)response.StatusCode, body);
+        return body.Length == 0 ? null : body;
+    }
+}
+```
+
+- `MemoryHandoffTokenStore` forgets the credential when the process exits, so
+  every launch signs in again. To keep players signed in, pass your own
+  `IHandoffCredentialStore` backed by the platform's secure storage.
+- `Authenticated` is the ready signal; an open socket is not. Sends made before
+  it are queued, not lost.
+- `SystemNetSocket` raises its events on a background thread. A game marshals
+  them to its main thread, for example through `SynchronizationContextSocket`.
+- There is no refresh token. After a REST `401` or a WebSocket `auth.expired`,
+  call `RestartLogin` and sign in again.
+- Unity projects use the Unity package's adapters (`UnityHandoffBrowser`,
+  `UnityRestApiTransport`, `UnitySocket`) instead of these three.
+
 ## The question
 
 **Does the outbound envelope's discriminant survive the crossing into C#, and
@@ -135,8 +282,9 @@ stores only the returned opaque bearer, token type, and absolute expiry through
 the host's token-store interface. A failed, cancelled, expired, or replayed
 callback cannot reuse the transaction.
 `RestartLogin` clears that store and begins a fresh handoff for metadata expiry,
-REST `401`, or WebSocket `auth.expired`; none of those events enters a web
-refresh-token path. A null `expires_in` (a durable credential) gives a
+REST `401`, WebSocket `auth.expired`, a `1008 credential_revoked` close
+(`CredentialRevoked`), or a handshake refused with `1008 unauthorized`
+(`CredentialRefused`); none of those events enters a web refresh-token path. A null `expires_in` (a durable credential) gives a
 null `ExpiresAt`. A store that also implements `IHandoffCredentialStore.Load`
 lets `Resume()` reuse the saved credential at start, so the browser opens only
 when nothing valid is saved; the included `MemoryHandoffTokenStore` is for
@@ -238,8 +386,12 @@ sessionChat.Dispose();                                // when the session ends
 - **An admission without a channel id is refused.** The constructor throws
   `ArgumentException` when `ChatChannelId` is empty, which is what a reply
   from a game service without session chat produces.
-- The filter is in the .NET core and vendored into Unity. Other targets do not
-  have it yet.
+- The filter is in the .NET core and vendored into Unity. JavaScript
+  (`SessionChatChannelFilter`), C++ (`Haiven::FSessionChatChannelFilter`),
+  Unreal (`UHaivenSessionChat`) and Godot GDScript
+  (`HaivenSessionChatChannelFilter`) have the same filter built from the
+  admission's channel id. They have no P2P session controller, so none of them
+  holds sends for a resume. Roblox does not have it yet.
 
 Not here yet:
 - **Catch-up after a reconnect** (`afterMessageId`) and the author's late
@@ -331,6 +483,14 @@ adapters consume. The Unity package lives in [`../unity`](https://github.com/hai
 the Godot .NET flavour in `../godot`; both reference this
 project rather than copying it.
 
+## License
+
+Haiven's source in this repository is licensed under the Apache License,
+Version 2.0 (SPDX `Apache-2.0`). The terms are in [LICENSE](LICENSE), and each
+library project records the SPDX identifier as its
+`PackageLicenseExpression`. Contributions are accepted under that license, as
+[CONTRIBUTING.md](CONTRIBUTING.md) says.
+
 <!-- features:start (generated by codegen/features.py; do not edit) -->
 
 ### Feature coverage
@@ -344,6 +504,7 @@ project rather than copying it.
 | REST | ○ | ○ |
 | Game login handoff | ○ | ○ |
 | P2P sessions | ~ | ~ |
+| Credential lifecycle | ~ | ~ |
 | API surface | ~ | ~ |
 | Product | ~ | ~ |
 | Developer experience | — | ~ |
